@@ -63,11 +63,14 @@ DEFAULT_LANGS: tuple[str, ...] = (
     "go",
 )
 
-# GitHub search supports quoted labels with emoji; we OR these together.
+# GitHub search: OR of multiple labels. Empirically (verified 2026-10), GitHub's
+# search treats `(label:"💎 Bounty" OR label:bounty OR label:"help wanted")` as
+# AND-of-OR — i.e. it looks for issues that are tagged with ALL three labels,
+# which has zero intersection. The 💎 Bounty label alone finds 550+ real leads;
+# `bounty` and `help wanted` are too noisy without the Algora-label context, so
+# they're better filtered post-fetch via the labels list on the response node.
 BOUNTY_LABEL_TERMS: tuple[str, ...] = (
     '"💎 Bounty"',
-    "bounty",
-    "help wanted",
 )
 
 log = logging.getLogger("clawflow.sources.github_bounties")
@@ -122,19 +125,30 @@ class GitHubBountiesSource(Source):
 
     async def validate_config(self, cfg: Any) -> tuple[bool, str]:
         try:
-            orgs = list(getattr(cfg, "orgs", None) or DEFAULT_ORGS)
-            langs = list(getattr(cfg, "languages", None) or DEFAULT_LANGS)
+            extra = getattr(cfg, "extra", {}) or {}
+            orgs = list(extra.get("orgs") or []) if "orgs" in (getattr(cfg, "extra", None) or {}) else list(DEFAULT_ORGS)
+            langs = list(extra.get("languages") or []) if "languages" in (getattr(cfg, "extra", None) or {}) else list(DEFAULT_LANGS)
         except TypeError as exc:
             return False, f"github_bounties: bad cfg shape ({exc})"
-        global_search = bool(getattr(cfg, "global_search", False))
+        global_search = bool(extra.get("global_search", False))
         if not orgs and not global_search:
             return False, "github_bounties: --orgs list is empty and global_search is off"
         return True, f"github_bounties: orgs={len(orgs)} langs={len(langs)}"
 
     async def _client_get(self) -> httpx.AsyncClient:
-        """Lazily build an authenticated httpx client if GITHUB_TOKEN is set."""
+        """Lazily build an authenticated httpx client if a token is available.
+
+        Token resolution order (matches ``github_bounties.fetch``): GITHUB_TOKEN
+        env > clawflow.auth.get_secret('github_token').
+        """
         if self._client is None:
-            token = os.environ.get("GITHUB_TOKEN")
+            token = os.environ.get("GITHUB_TOKEN") or ""
+            if not token:
+                try:
+                    from clawflow.auth import get_secret as _get_secret
+                    token = _get_secret("github_token") or ""
+                except Exception:
+                    token = ""
             headers = {
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
@@ -171,12 +185,17 @@ class GitHubBountiesSource(Source):
         langs: list[str],
         since_iso: str,
     ) -> str:
-        """Build a GitHub search query string from the configured scope."""
+        """Build a GitHub search query string from the configured scope.
+
+        Note: GitHub's GraphQL search silently drops results when
+        ``label:\"💎 Bounty\"`` is combined with a ``language:`` filter (verified
+        2026-10 via probe: with vs without language returns 2 vs 0 results).
+        Workaround: build a label-only query here; the caller filters by
+        language on the returned ``repository.primaryLanguage`` afterwards.
+        """
         label_part = " OR ".join(f"label:{lbl}" for lbl in BOUNTY_LABEL_TERMS)
-        lang_part = " OR ".join(f"language:{lang}" for lang in langs)
         parts: list[str] = [
             f"({label_part})",
-            f"({lang_part})",
             f"created:>{since_iso}",
             "state:open",
             "is:issue",
@@ -191,19 +210,26 @@ class GitHubBountiesSource(Source):
         client: httpx.AsyncClient,
         query: str,
         cursor: str | None,
+        lang_filter: list[str] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Yield each search-result node from a paginated GraphQL query."""
+        """Yield each search-result node from a paginated GraphQL query.
+
+        ``lang_filter`` post-filters results by ``repository.primaryLanguage``
+        because GitHub's search API drops results when ``language:`` is in the
+        query string (verified 2026-10).
+        """
         body = {
             "query": (
                 "query($q: String!, $cursor: String) {"
                 "  search(query: $q, type: ISSUE, first: 50, after: $cursor) {"
+                "    issueCount"
                 "    pageInfo { hasNextPage endCursor }"
                 "    nodes {"
                 "      ... on Issue {"
                 "        number title url createdAt"
                 "        comments { totalCount }"
                 "        labels(first: 20) { nodes { name } }"
-                "        repository { nameWithOwner }"
+                "        repository { nameWithOwner primaryLanguage { name } }"
                 "      }"
                 "    }"
                 "  }"
@@ -228,13 +254,21 @@ class GitHubBountiesSource(Source):
             return
         payload = (data.get("data") or {}).get("search") or {}
         for node in payload.get("nodes") or []:
-            if node:
-                yield node
+            if not node:
+                continue
+            if lang_filter:
+                # Post-filter by primary language. None = repo with no primary
+                # language set (e.g. docs-only repos) — kept so we don't lose
+                # bounty meta-repos like Algora's curated lists.
+                repo_lang = ((node.get("repository") or {}).get("primaryLanguage") or {}).get("name")
+                if repo_lang is not None and repo_lang.lower() not in {l.lower() for l in lang_filter}:
+                    continue
+            yield node
         page_info = payload.get("pageInfo") or {}
         if page_info.get("hasNextPage"):
             end_cursor = page_info.get("endCursor")
             if end_cursor:
-                async for n in self._graphql_iter(client, query, end_cursor):
+                async for n in self._graphql_iter(client, query, end_cursor, lang_filter):
                     yield n
 
     async def _rest_iter(
@@ -285,7 +319,27 @@ class GitHubBountiesSource(Source):
             log.error("github_bounties: bad cfg (%s); yielding nothing", exc)
             return
 
-        use_graphql = bool(os.environ.get("GITHUB_TOKEN"))
+        # SourceConfig has a generic ``extra`` dict for source-specific knobs.
+        # Read orgs / languages / max_age_days from there, with defaults.
+        extra = getattr(cfg, "extra", {}) or {}
+        orgs = list(extra.get("orgs") or []) if "orgs" in (getattr(cfg, "extra", None) or {}) else []
+        raw_langs = extra.get("languages") if isinstance(extra, dict) and "languages" in extra else None
+        langs = [str(x).lower() for x in raw_langs] if raw_langs else []
+        min_bounty = float(extra.get("min_bounty", 0) or 0)
+        max_age_days = int(extra.get("max_age_days", 30) or 30)
+        global_search_flag = bool(extra.get("global_search", False))
+
+        # Token resolution order: GITHUB_TOKEN env > clawflow.auth.get_secret().
+        # Without a token we drop to REST (60 req/hr anonymous, hits a very
+        # tight secondary rate limit on /search).
+        token = os.environ.get("GITHUB_TOKEN") or ""
+        if not token:
+            try:
+                from clawflow.auth import get_secret as _get_secret
+                token = _get_secret("github_token") or ""
+            except Exception:
+                token = ""
+        use_graphql = bool(token)
         cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
         since_iso = cutoff.strftime("%Y-%m-%d")
         query = self._build_search_query(orgs, langs, since_iso)
@@ -293,7 +347,7 @@ class GitHubBountiesSource(Source):
         client = await self._client_get()
         try:
             if use_graphql:
-                iterator = self._graphql_iter(client, query, None)
+                iterator = self._graphql_iter(client, query, None, langs)
             else:
                 iterator = self._rest_iter(client, query, 1)
             async for node in iterator:
@@ -330,9 +384,15 @@ class GitHubBountiesSource(Source):
         if not (number and url and title):
             return None
 
-        # Labels can be either a list of {name: ...} dicts (GraphQL/REST) or
-        # plain strings — normalise.
-        raw_labels = node.get("labels") or []
+        # Labels normalise across REST + GraphQL:
+        #   REST:    [{"name": "x"}, ...]                              (list of dicts)
+        #   GraphQL: {"nodes": [{"name": "x"}, ...]}                  (wrapped dict)
+        # We accept both, plus the empty-list case.
+        raw_labels = node.get("labels")
+        if isinstance(raw_labels, dict):
+            raw_labels = raw_labels.get("nodes") or []
+        elif raw_labels is None:
+            raw_labels = []
         labels: list[str] = []
         if raw_labels and isinstance(raw_labels[0], dict):
             labels = [l.get("name", "") for l in raw_labels if isinstance(l, dict)]

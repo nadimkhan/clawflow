@@ -126,7 +126,7 @@ def github_transport():
 
 
 @pytest.mark.asyncio
-async def test_github_bounties_parses_issue_and_scores_by_bounty():
+async def test_github_bounties_parses_issue_and_scores_by_bounty(monkeypatch):
     transport = _MockTransport()
     transport.register(
         "GET",
@@ -162,7 +162,16 @@ async def test_github_bounties_parses_issue_and_scores_by_bounty():
     client = httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(5.0))
     try:
         src = GitHubBountiesSource(client=client)
-        leads = [l async for l in src.fetch(state={}, cfg={"orgs": ["OpenZeppelin"], "max_age_days": 30})]
+        # Provide cfg-shaped dataclass so extra dict lookup works
+        from clawflow.config import SourceConfig
+        from dataclasses import replace
+
+        cfg = replace(SourceConfig(enabled=True), extra={"orgs": ["OpenZeppelin"], "max_age_days": 30})
+        # Force REST path regardless of any GITHUB_TOKEN env or auth.json entry.
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        with monkeypatch.context() as m:
+            m.setattr("clawflow.auth.get_secret", lambda name: "")
+            leads = [l async for l in src.fetch(state={}, cfg=cfg)]
     finally:
         await client.aclose()
     assert len(leads) == 2
