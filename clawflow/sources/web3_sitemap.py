@@ -37,7 +37,10 @@ REMOTE3_FALLBACKS: tuple[str, ...] = (
     "https://www.remote3.com/feed.xml",
 )
 
-CRYPTOJOBS_SITEMAP = "https://cryptojobslist.com/sitemap.xml"
+# CryptoJobsList split their sitemap in 2026: the root sitemap.xml is now
+# just a small index pointing at 9 per-section sitemaps. The job listings
+# live in /sitemap-jobs.xml directly. Point at it to skip the index dance.
+CRYPTOJOBS_SITEMAP = "https://cryptojobslist.com/sitemap-jobs.xml"
 
 # Keywords we filter on. Matching is OR + case-insensitive on a haystack built
 # from the title, summary, and any RSS tags.

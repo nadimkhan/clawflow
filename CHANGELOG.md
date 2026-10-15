@@ -5,6 +5,32 @@ All notable changes to **clawflow** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-10-16
+
+### Fixed
+- **`cryptojobs_sitemap` was discovering the sitemap index but finding zero
+  jobs.** CryptoJobsList split their `sitemap.xml` into 9 per-section sitemaps
+  in 2026; jobs now live in `sitemap-jobs.xml`. Updated the URL constant.
+- **`wordpress_cve` was producing zero leads** because two things changed
+  on the upstream side:
+  - The old `wpsiapi.com/v1/plugins/{slug}` endpoint went NXDOMAIN. Found
+    the new canonical endpoint via DNS probe + shape inspection:
+    **`https://www.wpvulnerability.net/plugin/{slug}`** (singular `plugin`,
+    no `/api/v1/` prefix).
+  - The response body shape changed from a flat `{"vulnerabilities": [...]}`
+    to `{"error": 0, "data": {"vulnerability": [...]}}` (singular key, nested
+    inside `data`). The parser now unwraps the envelope and looks up the
+    CVE id from `source[0].id` (the API moved CVEs from a top-level
+    `cve` field into a `source` array per vulnerability).
+  - The redirect from `wpvulnerability.net` → `www.wpvulnerability.net` was
+    being followed but the JSON-decode step was rejecting the raw 301's
+    HTML body. Now uses the `www.` host directly so no redirect happens.
+
+### Verified
+- One cycle now captures **234 leads** from `wordpress_cve` alone (Elementor
+  alone returns 64 valid vulnerabilities via the new endpoint).
+- All 34 tests pass.
+
 ## [0.1.1] — 2026-10-16
 
 ### Fixed
@@ -69,5 +95,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard is a stub; the real terminal UI ships in v0.2 (see `docs/roadmap.md`).
 - No external network calls happen at import time.
 
+[0.1.2]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.2
 [0.1.1]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.0

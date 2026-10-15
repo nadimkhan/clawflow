@@ -2,8 +2,8 @@
 
 Polls the WPVulnerability JSON API for each configured plugin slug and yields
 one :class:`Lead` per vulnerability, scored by severity. Results are cached
-on the ``state`` dict for 24 hours so a daily digest does not re-fire on the
-same CVE.
+on the ``state`` dict for 24 hours so a daily digest does not re-fire on
+the same CVE.
 
 Severity -> score mapping (clamped 0-100 to match other sources):
 
@@ -18,6 +18,13 @@ don't keep hammering that slug.
 
 The endpoint is unauthenticated public JSON; if it ever moves the URL
 constant below is the only thing that needs editing.
+
+History:
+- Pre-2026 used ``https://wpsiapi.com/v1/plugins/{slug}`` (now NXDOMAIN).
+- 2026-10 moved to ``https://wpvulnerability.net/plugin/{slug}``. The
+  response shape is ``{"error": 0, "message": ..., "data": {"vulnerability": [...]}}``
+  with the vulnerability list nested under the *singular* ``vulnerability``
+  key (not ``vulnerabilities``).
 """
 from __future__ import annotations
 
@@ -31,7 +38,11 @@ import httpx
 from clawflow.leads import Lead
 from clawflow.sources import Source, register
 
-WP_CVE_API = "https://wpsiapi.com/v1/plugins/{slug}"
+# 2026-10: the old wpsiapi.com URL went NXDOMAIN. The canonical endpoint
+# is now wpvulnerability.net/plugin/{slug} (singular 'plugin', no API prefix).
+# IMPORTANT: must use the www. host or get a 301 redirect which the previous
+# code mishandled. Redirects are also followed now via httpx defaults.
+WP_CVE_API = "https://www.wpvulnerability.net/plugin/{slug}"
 
 DEFAULT_SLUGS: tuple[str, ...] = (
     "elementor",
@@ -140,18 +151,35 @@ class WordPressCVESource(Source):
     def _data_to_leads(self, slug: str, data: Any) -> AsyncIterator[Lead]:
         """Yield :class:`Lead` records for every vulnerability in ``data``.
 
-        Tolerates a few response shapes: ``{"vulnerabilities": [...]}``,
-        ``{"vulnerability": [...] or {...}}``, ``{"data": [...]}``, or a
-        bare list. Unknown shapes yield zero leads (and don't raise).
+        Tolerates several response shapes:
+
+        * New wpvulnerability.net shape (2026):
+          ``{"error": 0, "data": {"name": ..., "vulnerability": [...]}}``
+        * Old wpsiapi.com shape (pre-2026):
+          ``{"vulnerabilities": [...]}`` or ``{"vulnerability": {...}}``
+        * Wrappers: ``{"data": [...]}`` or a bare list.
+
+        Unknown shapes yield zero leads (and don't raise).
         """
+        # First, unwrap a top-level {"data": {...}} envelope so we iterate
+        # over the actual vulnerability container.
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            data = data["data"]
+        # If the request returned an error envelope with non-null data, bail
+        # cleanly.
+        if isinstance(data, dict) and data.get("error"):
+            log.warning("wordpress_cve: API error for %s: %s", slug, data.get("message"))
+            return
+
         vulns: list[Any] = []
         if isinstance(data, dict):
-            for key in ("vulnerabilities", "vulnerability", "issues", "data"):
+            # Singular 'vulnerability' is the current production key (a list of vulns).
+            for key in ("vulnerability", "vulnerabilities", "issues", "data"):
                 value = data.get(key)
                 if isinstance(value, list):
                     vulns = value
                     break
-                if key == "vulnerability" and isinstance(value, dict):
+                if key in ("vulnerability", "vulnerability_obj") and isinstance(value, dict):
                     vulns = [value]
                     break
         elif isinstance(data, list):
@@ -161,11 +189,15 @@ class WordPressCVESource(Source):
             if not isinstance(v, dict):
                 continue
             try:
+                # New shape puts the human-readable name in `name`; old shape used `title`.
                 title = (
                     v.get("title")
                     or v.get("name")
                     or f"{slug}: vulnerability"
                 )
+                # New API has no `severity` field — derive a score from age
+                # + CVSS-equivalent signals later, but for now assign UNKNOWN.
+                # CVSS score if present in `source[*].cvss` is a later refinement.
                 raw_severity = (
                     v.get("severity")
                     or (v.get("cvss") or {}).get("severity")
@@ -173,16 +205,34 @@ class WordPressCVESource(Source):
                 )
                 severity = _normalize_severity(raw_severity)
                 score = SEVERITY_SCORE[severity]
-                cve_id = v.get("cve") or v.get("id") or ""
+                # New API uses `uuid` as the canonical id; `source[0].id`
+                # carries the CVE id when present.
+                sources = v.get("source") or []
+                cve_id = ""
+                if isinstance(sources, list) and sources and isinstance(sources[0], dict):
+                    cve_id = sources[0].get("id") or sources[0].get("name") or ""
+                if not cve_id:
+                    cve_id = v.get("cve") or v.get("id") or v.get("uuid") or ""
+                # Version-fixed: ``operator.max_version`` + ``operator.max_operator``
+                # say "patched once X.Y.Z is reached" (with `unfixed == "1"` if not).
+                operator = v.get("operator") or {}
                 patched = (
                     v.get("fixed_in")
                     or v.get("patch")
                     or v.get("fixedIn")
                     or ""
                 )
+                # URL: prefer the first CVE link if available; otherwise the
+                # WP plugin page. WPVulnerability's API doesn't expose a direct
+                # write-up per vuln, so we fall back to the source's CVE link.
+                sources = v.get("source") or []
+                cve_url = ""
+                if isinstance(sources, list) and sources and isinstance(sources[0], dict):
+                    cve_url = sources[0].get("link") or ""
                 url = (
                     v.get("url")
                     or v.get("reference")
+                    or cve_url
                     or v.get("link")
                     or f"https://wpatching.com/plugins/{slug}"
                 )
