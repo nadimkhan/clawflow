@@ -1,0 +1,94 @@
+# clawflow example configuration.
+#
+# Copy this file to ./clawflow.yml (or ~/.config/clawflow/config.yml)
+# and edit the values you want. Everything below is OFF by default —
+# uncomment a source block and set enabled: true to start using it.
+#
+# Six built-in source ids map to four CATEGORIES in the README:
+#   - github_bounties                       — category 1 (GitHub bounties)
+#   - remote3_rss + cryptojobs_sitemap      — category 2 (web3 job boards)
+#   - wordpress_cve                         — category 3 (WP-CVE service signal)
+#   - hn_freelancer + reddit_forhire        — category 4 (HN + Reddit)
+
+state_path: ./state.json          # atomic JSON lead store
+interval_minutes: 15              # poll cadence for `clawflow run`
+cycle_budget_seconds: 120         # hard cap per cycle
+
+# Dedup behaviour
+dedup:
+  retention_days: 30              # leads older than this are pruned
+
+# Logging
+logging:
+  level: INFO                     # DEBUG | INFO | WARNING | ERROR
+  format: "%(asctime)s %(levelname)s %(message)s"
+
+# ---------------------------------------------------------------------------
+# Sources — all six are off by default. Flip the ones you want.
+# ---------------------------------------------------------------------------
+sources:
+
+  github_bounties:
+    enabled: false                # requires GITHUB_TOKEN env var
+    severity_threshold: 0
+    orgs: [OpenZeppelin, ethereum-optimism, aave, uniswap, chainlink]
+    languages: [solidity, typescript, rust, go]
+    min_bounty: 0
+    max_age_days: 14
+    global_search: false
+
+  remote3_rss:
+    enabled: false                # no config required
+    severity_threshold: 0
+
+  cryptojobs_sitemap:
+    enabled: false                # no config required
+    severity_threshold: 0
+
+  wordpress_cve:
+    enabled: false                # no auth required
+    severity_threshold: 0
+    slugs: [elementor, woocommerce, wordpress-seo, wpforms-lite, yoast-seo]
+    min_severity: medium          # low | medium | high | critical
+
+  hn_freelancer:
+    enabled: false                # no auth required
+    severity_threshold: 0
+    query: "freelance solidity OR smart contract OR rust web3"
+    min_points: 5
+    lookback_hours: 24
+
+  reddit_forhire:
+    enabled: false                # no auth required
+    severity_threshold: 0
+    subreddits: [forhire]
+
+  # User-supplied community sources — see docs/sources.md
+  # community_example:
+  #     enabled: true
+  #     severity_threshold: 50
+
+# ---------------------------------------------------------------------------
+# Alerters — at least one is required (console is the default).
+# ---------------------------------------------------------------------------
+alerters:
+  - type: console
+    severity_threshold: 0
+    max_items_per_cycle: 50
+
+  # - type: telegram
+  #   severity_threshold: 30
+  #   parse_mode: markdown
+  #   # bot_token and chat_id come from TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+
+  # - type: email
+  #   severity_threshold: 50
+  #   smtp:
+  #     host: smtp.gmail.com
+  #     port: 587
+  #     username: you@gmail.com
+  #     password_env: SMTP_PASSWORD
+  #     use_tls: true
+  #   from_addr: clawflow@yourdomain.com  # any address you own; SPF/DKIM/DMARC recommended
+  #   to_addrs: [you@gmail.com]
+  #   subject_template: "[clawflow] {new_leads} new leads"

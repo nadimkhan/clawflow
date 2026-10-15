@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clawflow"
+version = "0.1.0"
+description = "One binary, four signals, zero sales-team BS — a freelance-opportunity aggregator for solo web3 and WordPress devs."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Nadim Khan", email = "graphixcon@gmail.com" }]
+keywords = ["freelance", "web3", "wordpress", "leads", "cli", "aggregator"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "feedparser>=6.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+clawflow = "clawflow.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/nadimkhan/clawflow"
+Issues = "https://github.com/nadimkhan/clawflow/issues"
+Changelog = "https://github.com/nadimkhan/clawflow/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+include = ["clawflow*"]
+exclude = ["tests*", "examples*", "docs*"]
+
+[tool.setuptools.package-data]
+clawflow = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501"]
