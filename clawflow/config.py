@@ -55,6 +55,31 @@ class LoggingConfig:
 
 
 @dataclass(frozen=True)
+class ProfileConfig:
+    """The user's skill + preference profile.
+
+    All fields are optional. The cycle's quality filter reads this and
+    drops leads that don't fit the user's stated seniority, stack, or
+    accepted-budget envelope.
+    """
+    # Seniority band. Anything in the lead hinting at a different band
+    # is dropped. Valid: intern, junior, mid, senior, principal, staff.
+    seniority: str = "senior"
+    # Minimum budget quoted by the lead. 0 = no floor.
+    min_budget_usd: int = 200
+    # Engagement types you will consider. Empty tuple = accept all.
+    preferred_engagements: tuple[str, ...] = (
+        "contract", "long-term-consulting", "full-time", "part-time", "audit", "research",
+    )
+    # Stacks you DO want leads for. Anything missing -> dropped.
+    preferred_stacks: tuple[str, ...] = ()
+    # Stacks you do NOT want. Lead rows that match any -> dropped.
+    excluded_stacks: tuple[str, ...] = ()
+    # Free-text phrases marking leads as scam-shaped.
+    scam_signals: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ClawflowConfig:
     """Top-level configuration object."""
 
@@ -65,6 +90,7 @@ class ClawflowConfig:
     alerters: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     dedup: DedupConfig = field(default_factory=DedupConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    profile: ProfileConfig = field(default_factory=ProfileConfig)
 
 
 # Module-level sentinel for tests that need the exact defaults.
@@ -222,6 +248,23 @@ def load_config(workdir: Path, config_path: Path | None = None) -> ClawflowConfi
         raise ValueError(f"logging.level must be one of DEBUG/INFO/WARNING/ERROR, got {log_level!r}")
     log_cfg = LoggingConfig(level=log_level, format=str(log_raw.get("format", DEFAULT_CONFIG.logging.format)))
 
+    # profile — the user's skill + preference block
+    profile_raw = raw.get("profile") or {}
+    if not isinstance(profile_raw, Mapping):
+        raise ValueError("profile must be a mapping")
+    seniority_val = str(profile_raw.get("seniority", DEFAULT_CONFIG.profile.seniority)).lower()
+    min_budget_val = _coerce_int(profile_raw.get("min_budget_usd", DEFAULT_CONFIG.profile.min_budget_usd), DEFAULT_CONFIG.profile.min_budget_usd, "profile.min_budget_usd")
+    if min_budget_val < 0:
+        raise ValueError("profile.min_budget_usd must be >= 0")
+    profile_cfg = ProfileConfig(
+        seniority=seniority_val,
+        min_budget_usd=min_budget_val,
+        preferred_engagements=tuple(profile_raw.get("preferred_engagements") or ()) or DEFAULT_CONFIG.profile.preferred_engagements,
+        preferred_stacks=tuple(profile_raw.get("preferred_stacks") or ()),
+        excluded_stacks=tuple(profile_raw.get("excluded_stacks") or ()),
+        scam_signals=tuple(profile_raw.get("scam_signals") or ()),
+    )
+
     return ClawflowConfig(
         state_path=state_path,
         interval_minutes=interval,
@@ -230,6 +273,7 @@ def load_config(workdir: Path, config_path: Path | None = None) -> ClawflowConfi
         alerters=tuple(alerters),
         dedup=dedup_cfg,
         logging=log_cfg,
+        profile=profile_cfg,
     )
 
 

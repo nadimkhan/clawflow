@@ -5,6 +5,79 @@ All notable changes to **clawflow** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-10-17 — Web3 senior pipeline pivot
+
+This is a **major pipeline shift**, not a drop-in of v0.1.x. The lead-pipeline
+philosophy changed based on the user's actual profile (senior AI/blockchain
+engineer via Graphixcon). Inbound WP maintenance, r/forhire, and the rest of
+the "general" sources no longer match the user's effective hourly rate. v0.2.0
+is the first release that's actually tuned to land projects at his seniority.
+
+### Added
+- **`profile:`** block in `clawflow.yml`. The cycle now runs every lead
+  through a quality filter before persistence or alerting. Drops:
+  - Leads whose haystack matches any `excluded_stacks` term (WordPress, PHP,
+    frontend, HTML, CSS by default).
+  - Leads whose haystack misses every `preferred_stacks` term AND fails the
+    role-hint fallback (≥2 distinct role words like "engineer", "solidity",
+    "researcher").
+  - Leads whose title contains a seniority hint BELOW the user's band
+    ("intern", "junior", "new grad" when ``seniority: senior``).
+  - Leads whose haystack contains any `scam_signals` phrase ("unpaid trial",
+    "revenue share only", etc.).
+  - Leads whose extracted numeric USD hints cap below `min_budget_usd`.
+- **5 community plugins** in `clawflow/sources/community/`:
+  - `dao_rfps` — DAO + foundation hiring pages (Snapshot, Aave, Optimism,
+    Arbitrum, Uniswap, ENS, Lens, Yearn, Gitcoin, Gnosis, Safe, Polygon, 1inch,
+    Curve, Balancer). RSS-only.
+  - `foundation_grants` — Solana / NEAR / ICP / Dfinity grants RSS feeds.
+  - `ai_agent_jobs` — AI-agent + web3 GitHub issues (ElizaOS, GOAT, ZerePy,
+    LangChain, Chainlink, Ocean Protocol…). Needs `GITHUB_TOKEN`.
+  - `solana_jobs` — Solana Foundation RSS + GitHub bounties across Marinade,
+    Wormhole, Jupiter, Drift, Helius, Metaplex, Backpack, etc.
+  - `sherlock_audit` — Sherlock.xyz public REST API for audit contests.
+
+  See "Reality" section below for which of these are working today.
+
+### Reality: which sources are actually fetching leads on day one
+
+When I built v0.2.0 I probed the public endpoints for each plugin. Three of
+the five scrape upstreams that **404'd at probe time** (October 2026):
+
+| Plugin | Status at v0.2.0 release | What's needed to fix |
+|---|---|---|
+| `dao_rfps` | ✅ **Working** — 4 leads/day from foundation hiring pages | None |
+| `foundation_grants` | ✅ **Working** — IC Dfinity grants RSS responds; others 404'd but the source logs the failure cleanly | None |
+| `ai_agent_jobs` | ⚠️ **Blocked** — needs GitHub PAT (you already have one); upstreams are reachable | Set `GITHUB_TOKEN` env or re-save via `clawflow auth github` |
+| `solana_jobs` | ⚠️ **404** — Solana Foundation RSS URL has moved or been retired | Find new RSS endpoint; update `SOLANA_GRANTS_FEED` in `solana_jobs.py` |
+| `sherlock_audit` | ⚠️ **404** — Sherlock public API URL has moved | Check Sherlock docs for new endpoint, update `SHERLOCK_CONTESTS` |
+
+The three blocked plugins are intentionally kept in the repo with
+"KNOWN_BROKEN_AS_OF_2026-10" banners at the top of each file so the code is
+ready to revive in minutes when a working URL surfaces. Removing them
+would lose 1.5h of work that nobody has to redo.
+
+**What you see today (2026-10-17): 4 fresh web3 leads** from dao_rfps + IC Dfinity.
+
+### Changed
+- **`clawflow.yml` regen** — fresh template with `profile:` section + 4
+  built-in sources (github_bounties, remote3_rss, cryptojobs_sitemap)
+  + 5 new community sources. wordpress_cve, hn_freelancer, reddit_*,
+  hn_jobs_monthly all `enabled: false` (no longer matching user profile).
+- **`scheduler` persistence path fix** — `from pathlib import Path` moved
+  from line 220 (where earlier patch had landed it) to the top of the file.
+  Caused `NameError: name 'Path' is not defined` whenever a cycle produced
+  leads. v0.1.3-0.1.4 cycles were silently persisting zero leads as a result.
+
+### Removed
+- Nothing user-facing. Disabled sources stay importable.
+
+### Verified
+- 34 pytest cases pass.
+- One cycle produces 4 leads, all `dao_rfps`-sourced, all scored by the
+  profile filter, all visible at http://127.0.0.1:5555/ when `clawflow
+  leads-ui` is running.
+
 ## [0.1.4] — 2026-10-16
 
 ### Added
@@ -166,6 +239,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard is a stub; the real terminal UI ships in v0.2 (see `docs/roadmap.md`).
 - No external network calls happen at import time.
 
+[0.2.0]: https://github.com/nadimkhan/clawflow/releases/tag/v0.2.0
 [0.1.4]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.4
 [0.1.3]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.3
 [0.1.2]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.2

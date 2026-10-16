@@ -16,6 +16,7 @@ import logging
 import signal
 import sys
 import time
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from clawflow.alerters import dispatch_alerts
@@ -125,13 +126,25 @@ async def _one_cycle(cfg: ClawflowConfig) -> int:
     )
     alerts_sent = 0
     if new_leads:
-        alerts_sent = await dispatch_alerts(cfg, new_leads)
+        # Apply the user's profile filter before persistence or alerting.
+        # Dropped leads don't count as alerts and don't go to state.json/db.
+        from clawflow.profile_filter import filter_leads
+        before_count = len(new_leads)
+        new_leads = filter_leads(new_leads, cfg.profile)
+        if len(new_leads) < before_count:
+            log.info(
+                "profile_filter: kept %d / %d after profile match",
+                len(new_leads), before_count,
+            )
+        if new_leads:
+            alerts_sent = await dispatch_alerts(cfg, new_leads)
 
     # Persist --------------------------------------------------------------
     # SQLite path lives next to state.json by convention; pass it through
     # so the leads-ui web app sees new leads immediately.
-    sqlite_db = str(Path(cfg.state_path).with_name("clawflow-leads.db"))
-    add_leads(cfg.state_path, new_leads, sqlite_path=sqlite_db)
+    if new_leads:
+        sqlite_db = str(Path(cfg.state_path).with_name("clawflow-leads.db"))
+        add_leads(cfg.state_path, new_leads, sqlite_path=sqlite_db)
 
     elapsed = time.monotonic() - cycle_start
     log.info(

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clawflow"
-version = "0.1.4"
+version = "0.2.0"
 description = "One binary, four signals, zero sales-team BS — a freelance-opportunity aggregator for solo web3 and WordPress devs."
 readme = "README.md"
 requires-python = ">=3.11"
