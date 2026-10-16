@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import logging
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, AsyncIterator, ClassVar
 
 from clawflow.leads import Lead
@@ -84,6 +85,11 @@ def _BUILTIN_SUBMODULES() -> tuple[str, ...]:
     )
 
 
+# Community plugins live here. Drop a Source.py file in and it
+# auto-loads on next `clawflow sources list` / `clawflow run` startup.
+_COMMUNITY_DIR = Path(__file__).resolve().parent / "community"
+
+
 def _load_submodules() -> None:
     """Import every built-in sub-module exactly once so its @register fires."""
     for name in _BUILTIN_SUBMODULES():
@@ -94,6 +100,30 @@ def _load_submodules() -> None:
         except Exception as exc:  # pragma: no cover -- defensive
             log.warning("failed to import source module %s: %s", name, exc)
         _SUBMODULES_LOADED.add(name)
+    _load_community_plugins()
+
+
+def _load_community_plugins() -> None:
+    """Auto-discover @register'd Source classes in clawflow/sources/community/.
+
+    Walks every .py file under that directory (top level only — subdirs are
+    skipped to keep this predictable), importing each one once. Any errors
+    are logged but never break the rest of the registry.
+    """
+    if not _COMMUNITY_DIR.is_dir():
+        return
+    for path in sorted(_COMMUNITY_DIR.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        # Module name like clawflow.sources.community.no_api_leads
+        modname = f"clawflow.sources.community.{path.stem}"
+        if modname in _SUBMODULES_LOADED:
+            continue
+        try:
+            importlib.import_module(modname)
+        except Exception as exc:  # pragma: no cover -- defensive
+            log.warning("failed to import community plugin %s: %s", path.name, exc)
+        _SUBMODULES_LOADED.add(modname)
 
 
 def all_sources() -> list[type[Source]]:

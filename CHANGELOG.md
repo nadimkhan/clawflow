@@ -5,6 +5,44 @@ All notable changes to **clawflow** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-10-16
+
+### Added
+- **Community plugin loader**: ``clawflow/sources/community/*.py`` files are
+  now auto-discovered at startup. Drop a ``@register``'d ``Source``
+  subclass in there and it shows up in ``clawflow sources list`` after
+  the next cycle starts.
+- **Free / no-API community plugin** at
+  ``clawflow/sources/community/no_api_leads.py``:
+  - ``reddit_old`` — reads ``old.reddit.com/r/{sub}.json`` (legacy endpoint
+    that didn't enforce auth until mid-2026).
+  - ``hn_jobs_monthly`` — scrapes HN's monthly ``whoishiring`` thread HTML
+    for "we are hiring X" comments, no API key.
+
+### Reality check (read this before enabling these)
+- **Reddit anonymous JSON is dead since ~mid-2026.** Both
+  ``www.reddit.com/.json`` and ``old.reddit.com/.json`` now redirect to a
+  login wall for any non-authenticated client. Public community mirrors
+  (PullPush, xcancel, Reddit-stream) are likewise rate-limited or legally
+  unavailable. ``reddit_old`` is shipped for the historical contract
+  (and as a template you can drop a working mirror URL into once you have
+  one), but it will return 0 leads on a default install as of 2026-10.
+- **HN is heavily throttling anonymous scraping in 2026.** Expect 419s.
+  ``hn_jobs_monthly`` ships functional but may yield 0 in rate-limit
+  windows. Pair with ``hn_freelancer`` (Algolia API, currently working
+  when the query matches).
+- **No good free Discord API workaround exists.** Community servers can
+  only be read via a Discord bot token (not anonymous). Discord bot
+  sources will land in v0.2 once someone files an issue requesting it.
+
+### What this version _did_ accomplish end-to-end
+- Auto-loading of community sources without manual import boilerplate.
+- ``reddit_old`` and ``hn_jobs_monthly`` are correctly wired through the
+  scheduler even though the upstream endpoints now block them.
+- ``clawflow sources list`` reports the two new source keys as
+  registered + opt-in.
+- 34 tests passing.
+
 ## [0.1.2] — 2026-10-16
 
 ### Fixed
@@ -95,6 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard is a stub; the real terminal UI ships in v0.2 (see `docs/roadmap.md`).
 - No external network calls happen at import time.
 
+[0.1.3]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.3
 [0.1.2]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.2
 [0.1.1]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.0
