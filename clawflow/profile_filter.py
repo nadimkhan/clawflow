@@ -141,6 +141,29 @@ def _stack_block(haystack: str, block_terms: Iterable[str]) -> bool:
     return False
 
 
+# Sources whose leads are short, slug-style and known-curated upstream.
+# These get a free pass on the "preferred stack" check because their
+# haystack is just a slug, not a job description.
+TRUSTED_SLUG_SOURCES: frozenset[str] = frozenset({
+    "audit_bounties",     # immunefi program slugs
+    "dao_rfps",            # curated DAO list
+    "foundation_grants",   # curated grant feeds
+})
+
+
+def _trusted_slug_source(lead: Lead, haystack: str) -> bool:
+    """Return True for short, slug-style leads from trusted sources.
+
+    These are real, well-known entities (Aave, Uniswap, ENS, Cosmos,
+    etc.) whose program/DAO/grant names are short and don't carry
+    any stack keywords in the haystack.
+    """
+    if lead.source not in TRUSTED_SLUG_SOURCES:
+        return False
+    # Must be short (slug-like) — under 60 chars after concatenation.
+    return len(haystack) < 60
+
+
 def apply_profile_filter(lead: Lead, profile: Any) -> tuple[bool, str]:
     """Return (keep, reason_if_dropped).
 
@@ -154,9 +177,17 @@ def apply_profile_filter(lead: Lead, profile: Any) -> tuple[bool, str]:
         return False, "excluded_stack"
 
     # 2. Preferred stacks (when non-empty)
+    # Special case: short, slug-style leads (immunefi bounty program
+    # slugs, dao names, etc.) carry no stack keywords in their haystack
+    # by design. We accept them as long as they don't match any
+    # excluded term — they're "high-signal because short and known".
     keep_terms = list(getattr(profile, "preferred_stacks", ()) or ())
     if not _stack_keep(hay, keep_terms):
-        return False, "no_preferred_stack_match"
+        # Trust known-curated sources even when their hay is just a slug.
+        if _trusted_slug_source(lead, hay):
+            pass
+        else:
+            return False, "no_preferred_stack_match"
 
     # 3. Scam signals
     sl = (getattr(profile, "scam_signals", ()) or ())

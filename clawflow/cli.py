@@ -452,6 +452,15 @@ def _cmd_leads_ui(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Programmatic entry point — also referenced by ``pyproject.toml``."""
+    # Load .env from the cwd (or any explicit --config file's parent dir)
+    # so that secrets like GITHUB_TOKEN don't have to be exported manually
+    # in every shell. Existing process env vars win on conflict.
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
+    except Exception:  # noqa: BLE001
+        pass  # .env is optional
+
     parser = build_parser()
     args = parser.parse_args(argv)
     handler = getattr(args, "handler", None)

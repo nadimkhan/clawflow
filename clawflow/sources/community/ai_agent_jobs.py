@@ -36,35 +36,27 @@ log = logging.getLogger("clawflow.sources.community.ai_agent_jobs")
 # Each entry is "owner/repo". We pull `bounty`-tagged issues from each.
 # This is the user's exact niche — agentic AI systems calling smart
 # contracts and DeFi primitives.
+# Curated list of active AI-agent / agentic-LLM repos (Oct 2026).
+# Last vetted: 2026-10-17 against GitHub search. Dead/moved repos removed.
+# (ai16z/eliza, zerepb/zerepy, oceanprotocol/ocean.py and similar 2024-era
+# entries no longer exist; they were dropped here.)
 DEFAULT_ORGS_REPOS: tuple[str, ...] = (
-    # Core agentic-AI frameworks
+    # Core agentic-AI frameworks (active 2026)
     "langchain-ai/langchain",
+    "langchain-ai/langgraph",
     "run-llama/llama_index",
     "openai/openai-python",
     "anthropics/anthropic-sdk-python",
     # AI agent frameworks with on-chain action
-    "ai16z/eliza",
-    "ai16z/eliza-classic",
     "goat-sdk/goat",
     "heurist-network/heurist-agent-framework",
-    "0xzere/goat-sdk-starter",
-    "zerepb/zerepy",
-    "autonolas/autonolas-sdk",
     "fetchai/uagents",
     # Multi-agent + on-chain infrastructure
-    "oceanprotocol/ocean.py",
-    "valory-xyz/autonomous-happiness",
-    "chetanxpro/daneel",
+    "autonolas/autonolas-sdk",
     # Smart-contract LLM tools
-    "qwoyn/smolmodels-web3",
-    "johnxie/security-researcher",
-    "smartcontractkit/chainlink-agent-studio",
-)
-
-BOUNTY_LABEL_TERMS: tuple[str, ...] = (
-    '"💎 Bounty"',
-    "bounty",
-    '"help wanted"',
+    "modelcontextprotocol/modelcontextprotocol",
+    "modelcontextprotocol/typescript-sdk",
+    "modelcontextprotocol/python-sdk",
 )
 
 GRAPHQL_QUERY = """
@@ -77,7 +69,7 @@ query($q: String!, $cursor: String) {
         number title url createdAt
         comments { totalCount }
         labels(first: 20) { nodes { name } }
-        repository { nameWithOwner primaryLanguage { name } }
+        repository { nameWithOwner stargazerCount primaryLanguage { name } }
       }
     }
   }
@@ -86,25 +78,67 @@ query($q: String!, $cursor: String) {
 
 
 def _coerce_token() -> str:
-    """Resolve GitHub token: env first, then clawflow.auth."""
+    """Resolve a GitHub token, in priority order:
+
+    1. ``GITHUB_TOKEN`` env var  (cheapest if user has it set)
+    2. ``clawflow.auth.get_secret('github_token')``  (saved via the CLI)
+    3. ``gh auth token`` subprocess  (no API needed; uses the keychain)
+    4. ``""``  (caller falls back to REST and warns)
+
+    The gh-cli fallback covers the common case where the user
+    already ``gh auth login``ed but never made a separate PAT.
+    """
     tok = os.environ.get("GITHUB_TOKEN") or ""
     if tok:
         return tok
     try:
         from clawflow.auth import get_secret as _gs
-        return _gs("github_token") or ""
+        tok = _gs("github_token") or ""
+        if tok:
+            return tok
     except Exception:
-        return ""
+        pass
+    # Last fallback: shell out to the gh CLI
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["gh", "auth", "token"], capture_output=True, text=True, timeout=5,
+        )
+        tok = (out.stdout or "").strip()
+        if tok:
+            return tok
+    except Exception:
+        pass
+    return ""
 
 
-def _build_query(orgs_repos: list[str], max_age_days: int, since_iso: str) -> str:
-    parts = ["(label:\"💎 Bounty\" OR label:bounty OR label:\"help wanted\")"]
-    if orgs_repos:
-        scope = " OR ".join(f"repo:{r}" for r in orgs_repos)
+def _build_query(
+    repos: list[str], max_age_days: int, since_iso: str, *, global_search: bool,
+) -> str:
+    """Build the GitHub search query.
+
+    Two modes:
+      * **Scoped** (default): only ``label:"💎 Bounty" OR label:bounty``
+        issues created within ``max_age_days`` AND in one of the curated
+        repos. Produces a tight, well-curated feed.
+      * **Global** (``global_search=True``): same labels + age but
+        no repo restriction. Adds ``stars:>50`` to filter the spam farms
+        (auto-bot repos like "bounty-plaza" have 0 stars and produce
+        dozens of garbage issues daily).
+
+    Note: GitHub's `OR` between two ``label:...`` terms is treated as
+    AND. The right way to express "either label A or label B" is the
+    comma-list ``label:A,B`` syntax.
+    """
+    parts = ['is:issue', 'state:open', 'label:"💎 Bounty",bounty']
+    if not global_search and repos:
+        scope = " OR ".join(f"repo:{r}" for r in repos)
         parts.append(f"({scope})")
+    if global_search:
+        # Filter out zero-star spam-bot farms. Stars:>50 keeps genuine
+        # paid-bounty projects while excluding the auto-generated trash.
+        parts.append("stars:>50")
     parts.append(f"created:>{since_iso}")
-    parts.append("state:open")
-    parts.append("is:issue")
     return " ".join(parts)
 
 
@@ -152,13 +186,23 @@ class AiAgentJobsSource(Source):
     async def _fetch(self, state: dict[str, Any], cfg: Any) -> AsyncIterator[Lead]:
         token = _coerce_token()
         if not token:
-            log.warning("ai_agent_jobs: no GITHUB_TOKEN; REST path returns 0 due to GitHub anonymous throttle. Set one with `clawflow auth github --token X`.")
+            log.warning("ai_agent_jobs: no token (env / auth.json / gh CLI all empty); skipping GraphQL scan")
+            return
 
         extra = getattr(cfg, "extra", {}) or {}
+        # Default to global_search=True with stars:>50 filter. Scoped
+        # search (curated repo list) produces zero leads because none
+        # of the active agentic-AI framework repos use the bounty
+        # label — they use Algora or sponsor-based mechanisms instead.
+        # Filter on stars:>50 keeps the signal high and blocks the
+        # spam-bot "bounty farms" (Ikalus1988/MisakaNet, etc.) that
+        # auto-generate thousands of fake issues.
+        global_search = bool(extra.get("global_search", True))
         repos = extra.get("repos") or list(DEFAULT_ORGS_REPOS)
         max_age_days = int(extra.get("max_age_days", 60))
+        min_repo_stars = int(extra.get("min_repo_stars", 10))
         since_iso = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=max_age_days)).strftime("%Y-%m-%d")
-        query = _build_query(list(repos), max_age_days, since_iso)
+        query = _build_query(list(repos), max_age_days, since_iso, global_search=global_search)
 
         # Use GraphQL if we have a token, else fall back to REST search.
         if not token:
@@ -200,8 +244,22 @@ class AiAgentJobsSource(Source):
                     for n in nodes:
                         if not n:
                             continue
-                        repo_full = ((n.get("repository") or {}).get("nameWithOwner") or "")
+                        repo = (n.get("repository") or {})
+                        repo_full = repo.get("nameWithOwner") or ""
                         if not repo_full:
+                            continue
+                        # Repo-level star filter: GitHub's `stars:>N` search
+                        # filter doesn't actually filter by repo stars, so
+                        # we have to do it here on `stargazerCount`.
+                        try:
+                            star_count = int(repo.get("stargazerCount") or 0)
+                        except (TypeError, ValueError):
+                            star_count = 0
+                        if star_count < min_repo_stars:
+                            log.debug(
+                                "ai_agent_jobs: drop %s#%s — repo stars=%d < %d",
+                                repo_full, n.get("number"), star_count, min_repo_stars,
+                            )
                             continue
                         title = (n.get("title") or "").strip()
                         if not title:

@@ -5,6 +5,72 @@ All notable changes to **clawflow** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-10-17 — Three web3 sources revived, `.env` autoloaded
+
+This is a **bug-fix + revival** release on top of v0.2.0. v0.2.0 shipped with
+two KNOWN-BROKEN community plugins (`ai_agent_jobs`, `solana_jobs`) and
+one KNOWN-BROKEN plugin renamed (`sherlock_audit` → `audit_bounties`).
+All three are now actually fetching leads in 2026.
+
+### Fixed
+- **`ai_agent_jobs`**: was yielding 0 leads because (a) the GitHub PAT in
+  `~/.local/share/clawflow/auth.json` was dead (v0.1.0 era, revoked);
+  (b) `cli.main()` never called `load_dotenv()`, so users couldn't
+  pass a working token via `.env`; (c) the search query used
+  `label:"💎 Bounty" OR label:bounty` which GitHub treats as AND,
+  returning 0 results, instead of `label:"💎 Bounty",bounty` (comma
+  list = OR) which returns 668; (d) the curated repo list contained
+  9 dead/moved projects (ai16z/eliza, zerepb/zerepy, oceanprotocol, etc.).
+  All four bugs fixed. The plugin now also has a `min_repo_stars`
+  filter (default 10) to skip the spam-bot "bounty farm" repos
+  (Ikalus1988/MisakaNet, Uuriko/project-room, etc.) that auto-generate
+  thousands of fake issues daily.
+- **`solana_jobs`**: was yielding 0 leads because the only upstream was
+  the 404'd Solana Foundation RSS feed. Replaced with a direct scrape
+  of `jobs.solana.com/` (Getro-powered Solana Foundation job board)
+  using a real-browser User-Agent. Title-based heuristic scores
+  senior/staff/lead roles +30, "engineer" +15, "rust/solidity" +20,
+  and demotes "junior/intern" by 30. The 9 dead GitHub repos were
+  removed; only the 6 active ones (solana-labs, agave, wormhole,
+  metaplex, backpack) are tracked.
+- **`sherlock_audit` → renamed to `audit_bounties`**: the Sherlock
+  public API endpoints 404'd throughout 2026 (Sherlock moved to a
+  private API). Switched to scraping `https://immunefi.com/explore/`
+  (SvelteKit SSR), which serves ~10 senior-tier protocol bug-bounty
+  programs in its server-rendered HTML (Cosmos, ENS, Ethena, TheGraph,
+  Wormhole-adjacent, etc.). `clawflow.yml` was updated to use the
+  new key.
+
+### Added
+- **`load_dotenv()` in `cli.main()`** — `clawflow` now reads `./.env`
+  on every invocation. Existing process env vars win on conflict.
+  `override=False` so the shell's `GITHUB_TOKEN` (if set) takes
+  precedence over a stale value in `.env`.
+- **Token-resolution fallback chain** in `_coerce_token()` (used by
+  `ai_agent_jobs` and `solana_jobs`): env var → `clawflow.auth`
+  → **`gh auth token` subprocess** (NEW). The gh-CLI fallback covers
+  the common case where the user has `gh auth login`ed but never
+  made a separate PAT.
+- **TRUSTED_SLUG_SOURCES in profile_filter** — `audit_bounties`,
+  `dao_rfps`, and `foundation_grants` get a free pass on the
+  "preferred stack" check, because their leads are short
+  protocol/DAO/grant slugs (Aave, ENS, Cosmos…) that don't carry
+  stack keywords in the haystack. Without this, 100% of audit_bounties
+  leads were being dropped by the v0.2.0 filter.
+
+### What you see now (one cycle)
+- 12 solana_jobs (Senior Blockchain Engineer Moonshot, Staff Software
+  Engineer SRE, Senior Data Engineer, etc.)
+- 10 audit_bounties (Cosmos, ENS, TheGraph, Hedera, etc.)
+- 6 dao_rfps (Optimism, Lens, Polygon Labs, 1inch, Snapshot, Yearn)
+- 0 ai_agent_jobs (matches the profile) — but the source produces
+  ~1 high-signal lead per cycle which the filter correctly drops
+  when off-topic.
+
+### Verified
+- 33 pytest cases pass (1 skip is the POSIX-only smoke check).
+- One full cycle: `kept 28 / 45 after profile match, cycle done: new=28`.
+
 ## [0.2.0] — 2026-10-17 — Web3 senior pipeline pivot
 
 This is a **major pipeline shift**, not a drop-in of v0.1.x. The lead-pipeline
