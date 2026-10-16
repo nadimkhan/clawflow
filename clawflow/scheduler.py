@@ -128,7 +128,10 @@ async def _one_cycle(cfg: ClawflowConfig) -> int:
         alerts_sent = await dispatch_alerts(cfg, new_leads)
 
     # Persist --------------------------------------------------------------
-    add_leads(cfg.state_path, new_leads)
+    # SQLite path lives next to state.json by convention; pass it through
+    # so the leads-ui web app sees new leads immediately.
+    sqlite_db = str(Path(cfg.state_path).with_name("clawflow-leads.db"))
+    add_leads(cfg.state_path, new_leads, sqlite_path=sqlite_db)
 
     elapsed = time.monotonic() - cycle_start
     log.info(

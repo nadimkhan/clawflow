@@ -266,6 +266,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_dash.set_defaults(handler=_cmd_dashboard)
 
+    # leads-ui (local web tracker) ----------------------------------------
+    p_leads_ui = sub.add_parser(
+        "leads-ui",
+        help="Run the local leads-tracker web UI (loopback only by default).",
+        description=(
+            "Opens a small FastAPI app on 127.0.0.1:5555 (default) so you can "
+            "see all leads with clickable URLs and mark them interested / "
+            "applied / rejected / done. The DB is a single SQLite file in the "
+            "current directory; loopback-only by default — pass --host to "
+            "expose on your LAN. Run 'clawflow sources list' and then click "
+            "around; nothing sends anything over the network from your machine."
+        ),
+    )
+    p_leads_ui.add_argument("--host", default="127.0.0.1", help="bind address")
+    p_leads_ui.add_argument("--port", type=int, default=5555, help="port")
+    p_leads_ui.add_argument(
+        "--db",
+        default=None,
+        help="path to SQLite DB (default: ./clawflow-leads.db)",
+    )
+    p_leads_ui.set_defaults(handler=_cmd_leads_ui)
+
     return parser
 
 
@@ -405,6 +427,23 @@ def _kind_to_args(kind: str, args: argparse.Namespace) -> argparse.Namespace:
         chat_id=getattr(args, "chat_id", "") or "",
         path=getattr(args, "path", None),
     )
+
+
+def _cmd_leads_ui(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    """Launch the FastAPI leads-tracker app.
+
+    Blocks until killed. Open http://127.0.0.1:5555/ in a browser.
+    """
+    import argparse  # noqa: F401  -- keep import for IDE happiness
+    from pathlib import Path as _P
+    from clawflow import leads_ui as _ui
+    argv = [
+        "--host", str(args.host),
+        "--port", str(args.port),
+    ]
+    if args.db:
+        argv += ["--db", args.db]
+    return _ui.main(argv)
 
 
 # ---------------------------------------------------------------------------

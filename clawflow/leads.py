@@ -160,12 +160,18 @@ def add_leads(
     leads: Iterable[Lead],
     *,
     merge_seen: bool = True,
+    sqlite_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, Any]:
     """Append new leads to ``path``, update the seen-set, persist atomically.
 
     ``merge_seen=True`` (the common case): keys already in the on-disk seen-set
     are not re-added; existing leads are not re-written. The seen-set on disk
     always ends up as a strict superset of the lead IDs in the file.
+
+    If ``sqlite_path`` is provided, also insert the same leads into the
+    SQLite store (used by the leads-ui web app). This is a one-way write:
+    SQLite errors are logged but never break the JSON store; the web UI
+    is an optional consumer.
 
     Returns the updated state dict so callers can inspect the post-write state
     without re-reading the file.
@@ -174,15 +180,25 @@ def add_leads(
     seen: set[str] = set(state.get("seen", []) or []) if merge_seen else set()
     existing_leads: list[dict[str, Any]] = list(state.get("leads", []) or [])
     appended: list[dict[str, Any]] = []
+    appended_leads: list[Lead] = []
     for lead in leads:
         key = lead.dedup_key()
         if key in seen:
             continue
         seen.add(key)
         appended.append(lead.to_dict())
+        appended_leads.append(lead)
     state["leads"] = existing_leads + appended
     state["seen"] = sorted(seen)
     state["version"] = STATE_VERSION
     state["updated_at"] = _utcnow_iso()
     save_state(path, state)
+    if sqlite_path is not None and appended_leads:
+        try:
+            from clawflow import store_sqlite  # local import: don't break no-httpx imports
+            store_sqlite.init_db(sqlite_path)
+            with store_sqlite.connect(sqlite_path) as conn:
+                store_sqlite.upsert_many(conn, appended_leads)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("add_leads: sqlite write skipped (%s)", exc)
     return state

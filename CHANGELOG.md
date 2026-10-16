@@ -5,6 +5,39 @@ All notable changes to **clawflow** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] — 2026-10-16
+
+### Added
+- **`clawflow leads-ui`** — local web UI for tracking leads and
+  applications. Runs on `127.0.0.1:5555` (loopback only by default).
+  - Lists every lead from the local SQLite store with score, source,
+    URL, tags, and a status pill.
+  - Status buttons per lead: ``interested`` / ``applied`` / ``done`` /
+    ``rejected`` / reset to ``new``. Plus a free-form note field.
+  - Filter by status and source from the top bar.
+  - JSON API at ``/api/leads`` and ``/api/health`` for automation.
+- **SQLite store** (``clawflow/store_sqlite.py``): a single-file
+  durable copy of the leads DB. ``add_leads`` writes to BOTH the JSON
+  ``state.json`` (CLI / dedup) and SQLite when a path is supplied.
+- **Status migration**: ``clawflow leads-ui`` copies every lead from
+  the existing ``state.json`` into SQLite on first run. Idempotent
+  via INSERT OR IGNORE.
+
+### Why no good free Reddit path right now (committed as-is)
+- Probed ``old.reddit.com/.json``, ``old.reddit.com/r/forhire/``,
+  ``www.reddit.com/.json``, PullPush, xcancel, and ``i.reddit.com``
+  in October 2026 — every path now either 302-to-login or rate-limits
+  anonymous traffic. The community plugin ``reddit_old`` continues
+  to ship as a documented template for when a working free mirror
+  surfaces. ``hn_jobs_monthly`` likewise: HN throttles 419.
+
+### Notes
+- 34 tests passing.
+- The web UI server runs as a foreground process on Windows; ``Ctrl+C``
+  in the terminal stops it cleanly. Two child processes spawn (uvicorn
+  worker + launcher) — if one is killed, the other is naturally
+  cleaned up. Use ``netstat -ano | grep :5555`` to find stragglers.
+
 ## [0.1.3] — 2026-10-16
 
 ### Added
@@ -133,6 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard is a stub; the real terminal UI ships in v0.2 (see `docs/roadmap.md`).
 - No external network calls happen at import time.
 
+[0.1.4]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.4
 [0.1.3]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.3
 [0.1.2]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.2
 [0.1.1]: https://github.com/nadimkhan/clawflow/releases/tag/v0.1.1

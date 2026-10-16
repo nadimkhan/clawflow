@@ -22,6 +22,7 @@ env/
 clawflow.yml
 clawflow.yaml
 state.json
+clawflow-leads.db
 .clawflow/
 
 # IDE / editor
